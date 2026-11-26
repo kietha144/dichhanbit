@@ -116,6 +116,12 @@ body.vi-only .ko{display:none}
 .quota.bad{color:var(--warn)}
 .meter{height:5px;border-radius:99px;background:var(--line);margin-top:5px;overflow:hidden}
 .meter i{display:block;height:100%;background:var(--accent);border-radius:99px}
+.field.wide{grid-column:1/-1}
+.level{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--warn)}
+.level-track{flex:0 0 120px;height:6px;border-radius:99px;background:var(--line);overflow:hidden}
+.level-track i{display:block;height:100%;width:0;background:var(--ok);border-radius:99px;transition:width .08s linear}
+.level-track i[data-l="low"]{background:var(--muted)}
+.level-track i[data-l="hot"]{background:var(--warn)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .count{font-family:var(--f-mono);font-size:11px;background:var(--accent-soft);border-radius:999px;padding:0 7px;margin-left:2px}
 .count:empty{display:none}
@@ -154,12 +160,13 @@ label.btn{display:inline-flex;align-items:center}
 
   <div class="session-bar">
     <label for="sessTitle" class="sr">Tên cuộc hội thoại</label>
-    <input type="text" id="sessTitle" placeholder="Đặt tên cuộc hội thoại (VD: Họp đối tác Samsung)">
+    <input type="text" id="sessTitle" placeholder="Đặt tên cuộc hội thoại">
     <span class="saved" id="savedNote">Tự động lưu trong trình duyệt</span>
   </div>
 
   <section class="booth" aria-live="polite">
     <div class="lbl"><span>Đang nghe · 한국어</span><span id="latency"></span></div>
+    <div class="level" id="level" hidden><div class="level-track"><i id="levelBar"></i></div><span id="levelTxt"></span></div>
     <div class="live-ko" id="liveKo"><span class="partial" id="koPartial"></span></div>
     <div class="lbl"><span>Bản dịch trực tiếp</span></div>
     <div class="live-vi empty" id="liveVi">Bấm nút micro rồi để điện thoại/máy tính gần người nói tiếng Hàn.</div>
@@ -179,6 +186,15 @@ label.btn{display:inline-flex;align-items:center}
           <button class="btn" type="button" id="emailSave">Lưu email</button>
         </div>
         <div class="quota" id="quotaNote"></div></div>
+      <div class="field"><label for="mode">Tốc độ dịch</label>
+        <select id="mode">
+          <option value="fast">Dịch ngay khi đang nói (cho người nói nhanh)</option>
+          <option value="balanced" selected>Cân bằng (chờ thêm chút để câu trọn ý hơn)</option>
+          <option value="off">Chờ hết câu mới dịch (chính xác nhất, chậm nhất)</option>
+        </select></div>
+      <div class="field wide"><label for="terms">Từ khoá riêng (tên người, công ty, thuật ngữ)</label>
+        <textarea id="terms" rows="3" placeholder="삼성 = Samsung&#10;김민수 = Kim Min-su&#10;계약서 = hợp đồng"></textarea>
+        <div class="quota" id="termsNote"></div></div>
       <div class="field"><label for="size">Cỡ chữ</label>
         <select id="size"><option value="0.9">Nhỏ</option><option value="1" selected>Vừa</option><option value="1.25">Lớn</option><option value="1.5">Rất lớn</option></select></div>
       <div class="field"><label for="speak">Đọc to bản dịch</label>
@@ -287,7 +303,7 @@ label.btn{display:inline-flex;align-items:center}
   const titleOf = s => (s.title && s.title.trim()) || ('Hội thoại ' + fmtDate(s.created));
 
   // ---------- settings ----------
-  ['engine','size','speak'].forEach(k => {
+  ['engine','size','speak','mode'].forEach(k => {
     const v = store.get('cab_'+k); if (v !== null) $(k).value = v;
     $(k).addEventListener('change', () => { store.set('cab_'+k, $(k).value); applySize(); });
   });
@@ -328,11 +344,6 @@ label.btn{display:inline-flex;align-items:center}
   });
   renderQuota();
 
-  // ---------- examples ----------
-  [
-    {ko:"안녕하세요, 오늘 회의에 와 주셔서 감사합니다.", vi:"Xin chào, cảm ơn mọi người đã đến dự cuộc họp hôm nay."},
-    {ko:"먼저 지난 분기 매출 결과부터 말씀드리겠습니다.", vi:"Trước tiên, tôi xin trình bày kết quả doanh thu quý vừa rồi."}
-  ].forEach(e => items.push({t:'—', ko:e.ko, vi:e.vi, state:'done', example:true}));
 
   const fmtTime = () => new Date().toTimeString().slice(0,8);
   const realItems = () => items.filter(i => !i.example);
@@ -402,12 +413,13 @@ label.btn{display:inline-flex;align-items:center}
   async function translate(it){
     const t0 = performance.now();
     const engine = $('engine').value;
+    const src = applyGlossary(it.ko);
     try{
       let vi;
-      try { vi = engine === 'google' ? await viaGoogle(it.ko) : await viaMyMemory(it.ko); }
+      try { vi = engine === 'google' ? await viaGoogle(src) : await viaMyMemory(src); }
       catch(e){
         // bộ dịch chính lỗi hoặc hết lượt -> thử bộ còn lại
-        vi = engine === 'google' ? await viaMyMemory(it.ko) : await viaGoogle(it.ko);
+        vi = engine === 'google' ? await viaMyMemory(src) : await viaGoogle(src);
       }
       it.vi = decode(vi).trim(); it.state = 'done'; finish(it);
       $('latency').textContent = 'dịch trong ' + ((performance.now()-t0)/1000).toFixed(1) + ' giây';
@@ -433,6 +445,7 @@ label.btn{display:inline-flex;align-items:center}
     if (items.some(i => i.example)) items = items.filter(i => !i.example);
     const it = {id:uid(), sid:cur.id, t:fmtTime(), ko, vi:'', state:'pending'};
     items.push(it); saveCurrent(); render(); translate(it);
+    return it;
   }
 
   // ---------- đọc to ----------
@@ -461,16 +474,125 @@ label.btn{display:inline-flex;align-items:center}
     showTypeIn();
   }
 
+  // ---------- từ khoá riêng: "삼성 = Samsung" ----------
+  function glossary(){
+    return $('terms').value.split(/\n|;/).map(l => l.trim()).filter(Boolean).map(l => {
+      const [ko, vi] = l.split('=').map(x => (x || '').trim());
+      return {ko, vi};
+    }).filter(g => g.ko);
+  }
+  // thay từ khoá tiếng Hàn bằng cách gọi tiếng Việt trước khi gửi đi dịch để tên riêng/thuật ngữ không bị dịch sai
+  function applyGlossary(text){
+    for (const g of glossary()) if (g.vi) text = text.split(g.ko).join(' ' + g.vi + ' ');
+    return text.replace(/\s{2,}/g, ' ').trim();
+  }
+  let phrasesOk = !!window.SpeechRecognitionPhrase;
+  function termsNote(){
+    const n = glossary().length;
+    $('termsNote').textContent = !n ? 'Tên người, tên công ty, thuật ngữ hay bị nghe hoặc dịch sai. Mỗi dòng một từ, có thể ghi kèm nghĩa sau dấu =.'
+      : phrasesOk ? `${n} từ khoá: dùng để giúp nghe đúng hơn và giữ nguyên khi dịch.`
+      : `${n} từ khoá: giữ nguyên khi dịch. Trình duyệt này chưa hỗ trợ dùng từ khoá để nghe, hãy cập nhật Chrome bản mới nhất.`;
+  }
+  $('terms').addEventListener('input', () => { store.set('cab_terms', $('terms').value); termsNote(); });
+  $('terms').value = store.get('cab_terms') || '';
+  termsNote();
+
+  // ---------- đo âm lượng micro ----------
+  let meter = null;
+  const isAndroid = /Android/i.test(navigator.userAgent);   // Android không cho 2 nơi cùng dùng micro, nên bỏ đo
+  async function startMeter(){
+    if (isAndroid || meter || !navigator.mediaDevices) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true, autoGainControl:true}});
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const an = ctx.createAnalyser(); an.fftSize = 512;
+      ctx.createMediaStreamSource(stream).connect(an);
+      const buf = new Uint8Array(an.fftSize);
+      let quiet = 0, raf = 0;
+      const tick = () => {
+        an.getByteTimeDomainData(buf);
+        let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+        const lvl = Math.min(1, peak / 90);
+        $('levelBar').style.width = (lvl * 100).toFixed(0) + '%';
+        $('levelBar').dataset.l = lvl > .9 ? 'hot' : lvl > .12 ? 'ok' : 'low';
+        quiet = lvl < .12 ? quiet + 1 : 0;
+        $('levelTxt').textContent = lvl > .9 ? 'Quá to, lùi micro ra' : quiet > 240 ? 'Tiếng nhỏ, đưa máy lại gần người nói' : '';
+        raf = requestAnimationFrame(tick);
+      };
+      tick();
+      meter = {stop(){ cancelAnimationFrame(raf); stream.getTracks().forEach(t => t.stop()); ctx.close(); }};
+      $('level').hidden = false;
+    } catch(e){}
+  }
+  function stopMeter(){ if (meter){ meter.stop(); meter = null; } $('level').hidden = true; $('levelTxt').textContent = ''; }
+
+  // ---------- dịch khi đang nói: chốt sớm phần chữ đã ổn định ----------
+  // Người bản xứ nói nhanh thường không ngắt câu, Chrome giữ cả tràng dài ở trạng thái "đang nghe".
+  // Ở đây phần đầu đã ổn định được gửi đi dịch luôn, chừa lại vài chữ cuối vì Chrome hay sửa chúng.
+  const MODES = {
+    off:  null,
+    fast: {stableMs: 650, force: 28, keep: 1},
+    balanced: {stableMs: 1000, force: 45, keep: 2}
+  };
+  let committed = new Map();   // chỉ số kết quả -> phần chữ đã gửi dịch
+  let recRun = 0;
+  let stableTimer = null;
+  function wordEnd(str, n){
+    const re = /\S+/g; let m, k = 0, end = 0;
+    while ((m = re.exec(str)) && k < n){ end = m.index + m[0].length; k++; }
+    return end;
+  }
+  function restOf(i, text){
+    const c = committed.get(i) || '';
+    return text.startsWith(c) ? text.slice(c.length) : text.slice(Math.min(c.length, text.length));
+  }
+  function commitEarly(i, text, keep){
+    const rest = restOf(i, text);
+    const n = (rest.match(/\S+/g) || []).length;
+    if (n <= keep) return false;
+    const cut = wordEnd(rest, n - keep);
+    const piece = rest.slice(0, cut);
+    if (piece.replace(/\s/g, '').length < 6) return false;
+    committed.set(i, (committed.get(i) || '') + piece);
+    const it = pushSegment(piece); if (it) it.early = recRun + ':' + i;
+    return true;
+  }
+
   function startRec(){
     rec = new SR();
     rec.lang = 'ko-KR'; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
-    rec.onstart = () => { setStatus('listening'); dockMsg('Đang nghe tiếng Hàn', 'Bản dịch hiện sau mỗi câu. Bấm nút để dừng.'); };
+    const g = glossary();
+    if (phrasesOk && g.length){ try { rec.phrases = g.map(x => new SpeechRecognitionPhrase(x.ko, 5.0)); } catch(e){ phrasesOk = false; termsNote(); } }
+    rec.onstart = () => {
+      committed = new Map(); recRun++;
+      setStatus('listening');
+      dockMsg('Đang nghe tiếng Hàn', $('mode').value === 'off' ? 'Bản dịch hiện sau mỗi câu. Bấm nút để dừng.' : 'Đang dịch ngay khi người nói chưa dứt câu. Bấm nút để dừng.');
+    };
     rec.onresult = ev => {
+      const mode = MODES[$('mode').value];
       let interim = '';
+      clearTimeout(stableTimer);
       for (let i = ev.resultIndex; i < ev.results.length; i++){
-        const r = ev.results[i];
-        if (r.isFinal) pushSegment(r[0].transcript);
-        else interim += r[0].transcript;
+        const r = ev.results[i], text = r[0].transcript;
+        if (r.isFinal){
+          const rest = restOf(i, text), last = items[items.length-1];
+          // đuôi câu quá ngắn (VD "예정입니다") dịch riêng sẽ vô nghĩa -> ghép vào đoạn trước rồi dịch lại cả đoạn
+          if (last && last.early === recRun + ':' + i && rest.replace(/\s/g, '').length < 12 && rest.trim()){
+            last.ko = (last.ko.trimEnd() + ' ' + rest.trim()); last.vi = ''; last.state = 'pending'; last.early = null;
+            saveCurrent(); render(); translate(last);
+          } else pushSegment(rest);
+          committed.delete(i);
+        } else {
+          if (mode && restOf(i, text).replace(/\s/g, '').length > mode.force) commitEarly(i, text, mode.keep + 1);
+          interim += restOf(i, text);
+          if (mode){
+            const idx = i;
+            stableTimer = setTimeout(() => {
+              commitEarly(idx, text, mode.keep);
+              $('koPartial').textContent = restOf(idx, text);
+            }, mode.stableMs);
+          }
+        }
       }
       $('koPartial').textContent = interim;
     };
@@ -482,14 +604,21 @@ label.btn{display:inline-flex;align-items:center}
         wantListening = false; dockMsg('Không tìm thấy micro', 'Kiểm tra micro đã cắm và không bị app khác chiếm.');
       } else if (ev.error === 'network'){
         dockMsg('Mất kết nối nhận giọng', 'Chrome cần internet để nhận giọng nói. Đang thử lại…');
+      } else if (ev.error === 'phrases-not-supported'){
+        phrasesOk = false; termsNote(); needRebuild = true;   // onend sẽ mở lại, lần này không kèm từ khoá
       }
-      // 'no-speech' và 'aborted' bỏ qua, onend sẽ tự bật lại
     };
     rec.onend = () => {
+      clearTimeout(stableTimer);
+      // phần đang nghe dở chưa kịp chốt thì gửi dịch luôn, tránh mất chữ
+      const left = $('koPartial').textContent.trim();
+      if (left) pushSegment(left);
       $('koPartial').textContent = '';
-      // Chrome tự tắt sau một lúc im lặng -> tự mở lại để nghe liên tục như cabin
-      if (wantListening){ setTimeout(() => { if (wantListening) try { rec.start(); } catch(e){} }, 250); }
-      else { setStatus('idle'); dockMsg('Đã dừng', 'Bấm micro để nghe tiếp.'); }
+      if (wantListening){
+        // Chrome tự ngắt mỗi lượt nghe; mở lại ngay lập tức để hụt ít chữ nhất
+        if (needRebuild){ needRebuild = false; startRec(); }
+        else { try { rec.start(); } catch(e){ setTimeout(() => { if (wantListening) startRec(); }, 50); } }
+      } else { setStatus('idle'); stopMeter(); dockMsg('Đã dừng', 'Bấm micro để nghe tiếp.'); }
     };
     setStatus('starting');
     try { rec.start(); } catch(e){}
@@ -498,8 +627,11 @@ label.btn{display:inline-flex;align-items:center}
   $('mic').addEventListener('click', () => {
     if (!SR) return;
     if (wantListening){ wantListening = false; try { rec && rec.stop(); } catch(e){} return; }
-    wantListening = true; startRec();
+    wantListening = true; startRec(); startMeter();
   });
+  // đổi từ khoá khi đang nghe thì mở lại lượt nghe để áp dụng
+  let needRebuild = false;
+  $('terms').addEventListener('change', () => { if (wantListening && rec){ needRebuild = true; try { rec.stop(); } catch(e){} } });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && wantListening && rec){ try { rec.start(); } catch(e){} }
   });
@@ -619,7 +751,7 @@ label.btn{display:inline-flex;align-items:center}
   });
 
   // mở trang: bắt đầu cuộc mới, các cuộc cũ nằm trong Lịch sử
-  const keepExamples = items; newSession(); items = keepExamples;
+  newSession();
   $('histCount').textContent = sessions.length || '';
   render();
 })();
