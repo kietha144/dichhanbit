@@ -108,6 +108,28 @@ body.vi-only .ko{display:none}
 .screen .sko{font-family:var(--f-ko);font-size:calc(18px*var(--scale));color:var(--muted)}
 .screen .close{position:absolute;top:calc(16px + env(safe-area-inset-top,0px));right:max(16px,env(safe-area-inset-right,0px))}
 @media (max-width:520px){.live-vi{font-size:calc(21px*var(--scale))}.screen .cur{font-size:calc(28px*var(--scale))}.item{grid-template-columns:1fr;gap:2px}}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.count{font-family:var(--f-mono);font-size:11px;background:var(--accent-soft);border-radius:999px;padding:0 7px;margin-left:2px}
+.count:empty{display:none}
+.session-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.session-bar input{flex:1;min-width:200px;font-weight:600}
+.saved{font-size:12px;color:var(--muted)}
+.saved.err{color:var(--warn)}
+.scrim{position:fixed;inset:0;background:color-mix(in srgb,var(--fg) 30%,transparent);z-index:30}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(420px,100%);background:var(--surface);border-left:1px solid var(--line);z-index:31;display:flex;flex-direction:column;gap:12px;
+  padding:calc(16px + env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) calc(16px + env(safe-area-inset-bottom,0px)) 16px}
+.drawer-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.drawer-head h2{margin:0;font-size:17px}
+.hist-list{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;min-height:0}
+.hist{border:1px solid var(--line);border-radius:14px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.hist.current{border-color:var(--accent);background:var(--tint)}
+.hist .h-title{font-weight:600;overflow-wrap:anywhere}
+.hist .h-meta{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hist .h-prev{font-size:13px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.hist .row .btn{padding:4px 10px;font-size:12px}
+.drawer-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.drawer-foot .note{flex-basis:100%;margin:0;font-size:12px;color:var(--muted)}
+label.btn{display:inline-flex;align-items:center}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -115,8 +137,18 @@ body.vi-only .ko{display:none}
 <div class="wrap">
   <header>
     <div class="brand"><h1>Cabin Hàn–Việt</h1><span class="pair">한국어 → Tiếng Việt</span></div>
-    <span class="status" id="status" data-s="idle"><span class="dot"></span><span id="statusTxt">Đang chờ</span></span>
+    <div class="row">
+      <span class="status" id="status" data-s="idle"><span class="dot"></span><span id="statusTxt">Đang chờ</span></span>
+      <button class="btn" id="newBtn">Cuộc mới</button>
+      <button class="btn" id="histBtn">Lịch sử <span id="histCount" class="count"></span></button>
+    </div>
   </header>
+
+  <div class="session-bar">
+    <label for="sessTitle" class="sr">Tên cuộc hội thoại</label>
+    <input type="text" id="sessTitle" placeholder="Đặt tên cuộc hội thoại (VD: Họp đối tác Samsung)">
+    <span class="saved" id="savedNote">Tự động lưu trong trình duyệt</span>
+  </div>
 
   <section class="booth" aria-live="polite">
     <div class="lbl"><span>Đang nghe · 한국어</span><span id="latency"></span></div>
@@ -169,6 +201,22 @@ body.vi-only .ko{display:none}
   </div>
 </div>
 
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="Lịch sử hội thoại">
+  <div class="drawer-head">
+    <h2>Lịch sử hội thoại</h2>
+    <button class="btn" id="closeDrawer">Đóng</button>
+  </div>
+  <input type="text" id="histSearch" placeholder="Tìm theo tên hoặc nội dung (Hàn/Việt)">
+  <div class="hist-list" id="histList"></div>
+  <div class="drawer-foot">
+    <button class="btn" id="exportAll">Tải tất cả (.json)</button>
+    <label class="btn" for="importFile">Nhập từ file .json</label>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
+    <p class="note" id="storageNote"></p>
+  </div>
+</aside>
+
 <div class="screen" id="screen" hidden>
   <button class="btn close" id="closeScreen">Đóng</button>
   <div class="prev" id="sPrev"></div>
@@ -186,6 +234,45 @@ body.vi-only .ko{display:none}
   let items = [];          // {t, ko, vi, state:'pending'|'done'|'err', example}
   let rec = null;
   let wantListening = false;
+
+  // ---------- lưu trữ hội thoại ----------
+  const KEY = 'cab_sessions_v1';
+  let sessions = (() => { try { const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v : []; } catch(e){ return []; } })();
+  let cur = null;
+  const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+  function newSession(){
+    cur = {id:'s'+uid(), title:'', created:Date.now(), updated:Date.now(), items:[]};
+    items = []; $('sessTitle').value = '';
+  }
+  function persist(){
+    try {
+      localStorage.setItem(KEY, JSON.stringify(sessions));
+      $('savedNote').textContent = 'Đã lưu lúc ' + fmtTime(); $('savedNote').classList.remove('err');
+    } catch(e){
+      $('savedNote').textContent = 'Không lưu được: bộ nhớ trình duyệt đã đầy hoặc bị chặn. Hãy tải các cuộc cũ về rồi xoá bớt.';
+      $('savedNote').classList.add('err');
+    }
+    $('histCount').textContent = sessions.length || '';
+  }
+  function saveCurrent(){
+    const real = items.filter(i => !i.example);
+    const idx = sessions.findIndex(s => s.id === cur.id);
+    if (!real.length && !cur.title.trim() && idx < 0) return;   // chưa có gì thì không tạo bản ghi rỗng
+    cur.items = real.map(({id,t,ko,vi,state}) => ({id,t,ko,vi,state}));
+    cur.updated = Date.now();
+    if (idx < 0) sessions.unshift(cur); else sessions[idx] = cur;
+    persist();
+  }
+  function openSession(id){
+    const s = sessions.find(x => x.id === id); if (!s) return;
+    cur = s; $('sessTitle').value = s.title || '';
+    items = s.items.map(i => ({...i, sid:s.id, state: i.state === 'pending' ? 'err' : i.state, vi: i.state === 'pending' ? (i.vi || 'Chưa dịch xong khi lưu.') : i.vi}));
+    render(); closeDrawer();
+    $('liveVi').textContent = items.length ? items[items.length-1].vi : 'Cuộc hội thoại này chưa có câu nào.';
+    dockMsg('Đã mở “' + titleOf(s) + '”', 'Bấm micro để nói tiếp vào cuộc này.');
+  }
+  const fmtDate = ts => new Date(ts).toLocaleString('vi-VN', {hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit', year:'numeric'});
+  const titleOf = s => (s.title && s.title.trim()) || ('Hội thoại ' + fmtDate(s.created));
 
   // ---------- settings ----------
   ['engine','email','size','speak'].forEach(k => {
@@ -275,7 +362,7 @@ body.vi-only .ko{display:none}
         // bộ dịch chính lỗi hoặc hết lượt -> thử bộ còn lại
         vi = engine === 'google' ? await viaMyMemory(it.ko) : await viaGoogle(it.ko);
       }
-      it.vi = decode(vi).trim(); it.state = 'done';
+      it.vi = decode(vi).trim(); it.state = 'done'; finish(it);
       $('latency').textContent = 'dịch trong ' + ((performance.now()-t0)/1000).toFixed(1) + ' giây';
       speak(it.vi);
     }catch(e){
@@ -283,14 +370,22 @@ body.vi-only .ko{display:none}
       it.vi = e && e.message === 'quota'
         ? 'Hết lượt dịch miễn phí hôm nay. Nhập email trong Cài đặt hoặc đổi bộ dịch.'
         : 'Không dịch được câu này (kiểm tra kết nối mạng).';
+      finish(it);
     }
     render();
+  }
+  // lưu bản dịch vào đúng cuộc hội thoại, kể cả khi người dùng đã chuyển sang cuộc khác
+  function finish(it){
+    if (it.sid === cur.id){ saveCurrent(); return; }
+    const s = sessions.find(x => x.id === it.sid); if (!s) return;
+    const stored = s.items.find(x => x.id === it.id);
+    if (stored){ stored.vi = it.vi; stored.state = it.state; persist(); }
   }
   function pushSegment(ko){
     ko = ko.trim(); if (!ko) return;
     if (items.some(i => i.example)) items = items.filter(i => !i.example);
-    const it = {t:fmtTime(), ko, vi:'', state:'pending'};
-    items.push(it); render(); translate(it);
+    const it = {id:uid(), sid:cur.id, t:fmtTime(), ko, vi:'', state:'pending'};
+    items.push(it); saveCurrent(); render(); translate(it);
   }
 
   // ---------- đọc to ----------
@@ -380,13 +475,13 @@ body.vi-only .ko{display:none}
   });
   $('clearBtn').addEventListener('click', e => {
     const b = e.currentTarget;
-    if (b.dataset.confirm){ items=[]; delete b.dataset.confirm; b.textContent='Xoá'; $('liveVi').textContent='Đã xoá biên bản.'; $('liveVi').classList.add('empty'); render(); return; }
+    if (b.dataset.confirm){ items=[]; saveCurrent(); delete b.dataset.confirm; b.textContent='Xoá'; $('liveVi').textContent='Đã xoá nội dung cuộc này.'; $('liveVi').classList.add('empty'); render(); return; }
     b.dataset.confirm='1'; b.textContent='Bấm lần nữa để xoá';
     setTimeout(() => { if (b.dataset.confirm){ delete b.dataset.confirm; b.textContent='Xoá'; } }, 3000);
   });
   $('copyBtn').addEventListener('click', e => {
     const b = e.currentTarget;
-    const txt = realItems().map(i => `[${i.t}]\n${i.ko}\n→ ${i.vi}`).join('\n\n');
+    const txt = toText(cur, realItems());
     const done = () => { b.textContent='Đã chép'; setTimeout(()=>b.textContent='Sao chép',1500); };
     navigator.clipboard.writeText(txt).then(done, () => {
       const ta=document.createElement('textarea'); ta.value=txt; document.body.append(ta); ta.select();
@@ -394,6 +489,91 @@ body.vi-only .ko{display:none}
     });
   });
 
+  // ---------- lịch sử: giao diện ----------
+  function toText(s, list){
+    return titleOf(s) + '\n' + fmtDate(s.created) + '\n\n' + list.map(i => `[${i.t}]\n${i.ko}\n→ ${i.vi}`).join('\n\n');
+  }
+  function download(name, content, type){
+    const url = URL.createObjectURL(new Blob([content], {type}));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  const safeName = s => titleOf(s).replace(/[\\/:*?"<>|]+/g, '-').slice(0,60);
+
+  function renderHistory(){
+    const q = $('histSearch').value.trim().toLowerCase();
+    const list = $('histList'); list.textContent = '';
+    const shown = sessions.filter(s => !q || titleOf(s).toLowerCase().includes(q) || s.items.some(i => (i.ko + ' ' + i.vi).toLowerCase().includes(q)));
+    if (!shown.length){
+      const p = document.createElement('p'); p.className = 'empty-note';
+      p.textContent = sessions.length ? 'Không tìm thấy cuộc nào khớp.' : 'Chưa có cuộc hội thoại nào được lưu. Mỗi lần bạn dịch, cuộc hội thoại sẽ tự lưu vào đây.';
+      list.append(p);
+    }
+    for (const s of shown){
+      const card = document.createElement('div'); card.className = 'hist' + (s.id === cur.id ? ' current' : '');
+      const title = document.createElement('div'); title.className = 'h-title'; title.textContent = titleOf(s) + (s.id === cur.id ? ' · đang mở' : '');
+      const meta = document.createElement('div'); meta.className = 'h-meta'; meta.textContent = s.items.length + ' câu · sửa lần cuối ' + fmtDate(s.updated);
+      const prev = document.createElement('div'); prev.className = 'h-prev'; prev.textContent = s.items.slice(0,2).map(i => i.vi || i.ko).join(' · ');
+      const row = document.createElement('div'); row.className = 'row';
+      const mk = (label, fn) => { const b = document.createElement('button'); b.className = 'btn'; b.type = 'button'; b.textContent = label; b.onclick = fn; row.append(b); return b; };
+      if (s.id !== cur.id) mk('Mở', () => openSession(s.id));
+      mk('Tải .txt', () => download(safeName(s) + '.txt', toText(s, s.items), 'text/plain;charset=utf-8'));
+      mk('Tải .json', () => download(safeName(s) + '.json', JSON.stringify(s, null, 2), 'application/json'));
+      const del = mk('Xoá', () => {
+        if (!del.dataset.confirm){ del.dataset.confirm = '1'; del.textContent = 'Chắc chắn xoá?'; setTimeout(() => { delete del.dataset.confirm; del.textContent = 'Xoá'; }, 3000); return; }
+        sessions = sessions.filter(x => x.id !== s.id); persist();
+        if (s.id === cur.id){ newSession(); render(); }
+        renderHistory();
+      });
+      card.append(title, meta);
+      if (prev.textContent) card.append(prev);
+      card.append(row); list.append(card);
+    }
+    const kb = Math.round(JSON.stringify(sessions).length * 2 / 1024);
+    $('storageNote').textContent = `Lưu ngay trong trình duyệt này (${sessions.length} cuộc, khoảng ${kb} KB). Đổi máy hoặc xoá dữ liệu trình duyệt sẽ mất, nên thỉnh thoảng hãy bấm “Tải tất cả” để sao lưu.`;
+  }
+  function openDrawer(){ renderHistory(); $('drawer').hidden = false; $('scrim').hidden = false; $('histSearch').focus(); }
+  function closeDrawer(){ $('drawer').hidden = true; $('scrim').hidden = true; }
+  $('histBtn').addEventListener('click', openDrawer);
+  $('closeDrawer').addEventListener('click', closeDrawer);
+  $('scrim').addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('drawer').hidden) closeDrawer(); });
+  $('histSearch').addEventListener('input', renderHistory);
+  $('newBtn').addEventListener('click', () => {
+    saveCurrent(); newSession(); render();
+    $('liveVi').textContent = 'Đã mở cuộc hội thoại mới.'; $('liveVi').classList.add('empty');
+    $('sessTitle').focus();
+  });
+  $('sessTitle').addEventListener('input', () => { cur.title = $('sessTitle').value; saveCurrent(); });
+  $('exportAll').addEventListener('click', () => {
+    if (!sessions.length) return;
+    download('cabin-han-viet-sao-luu-' + new Date().toISOString().slice(0,10) + '.json', JSON.stringify(sessions, null, 2), 'application/json');
+  });
+  $('importFile').addEventListener('change', async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try {
+      let data = JSON.parse(await f.text());
+      if (!Array.isArray(data)) data = [data];
+      let added = 0;
+      for (const s of data){
+        if (!s || !Array.isArray(s.items)) continue;
+        const clean = {
+          id: sessions.some(x => x.id === s.id) || !s.id ? 's' + uid() : String(s.id),
+          title: String(s.title || ''), created: Number(s.created) || Date.now(), updated: Number(s.updated) || Date.now(),
+          items: s.items.map(i => ({id: String(i.id || uid()), t: String(i.t || ''), ko: String(i.ko || ''), vi: String(i.vi || ''), state: i.state === 'err' ? 'err' : 'done'}))
+        };
+        sessions.push(clean); added++;
+      }
+      sessions.sort((a,b) => b.updated - a.updated); persist(); renderHistory();
+      $('storageNote').textContent = added ? `Đã nhập ${added} cuộc hội thoại.` : 'File không có cuộc hội thoại nào hợp lệ.';
+    } catch(err){
+      $('storageNote').textContent = 'Không đọc được file. Hãy chọn file .json tải từ app này.';
+    }
+  });
+
+  // mở trang: bắt đầu cuộc mới, các cuộc cũ nằm trong Lịch sử
+  const keepExamples = items; newSession(); items = keepExamples;
+  $('histCount').textContent = sessions.length || '';
   render();
 })();
 </script>
