@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Cabin Hàn–Việt</title>
+<meta name="description" content="Phiên dịch song song tiếng Hàn sang tiếng Việt ngay trên trình duyệt">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: live booth strip on top, scrolling transcript of KO→VI pairs, control dock fixed at bottom */
+:root{
+  --bg:#fff7f9; --surface:#ffffff; --tint:#ffe9ef; --line:#f3d3dc;
+  --fg:#3a2430; --muted:#8f6b7b; --accent:#e5568a; --accent-ink:#ffffff; --accent-soft:#fbd3e1;
+  --live:#d63c6f; --ok:#2f9e6f; --warn:#c77a12;
+  --f-ui:"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-ko:"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --scale:1;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#1d1219; --surface:#281a23; --tint:#33202c; --line:#4a2f3e;
+  --fg:#fbe9f0; --muted:#c49aae; --accent:#ff7aa8; --accent-ink:#2a0f1c; --accent-soft:#4d2539;
+  --live:#ff8fb5; --ok:#5fd3a0; --warn:#f0b35a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#1d1219; --surface:#281a23; --tint:#33202c; --line:#4a2f3e;
+  --fg:#fbe9f0; --muted:#c49aae; --accent:#ff7aa8; --accent-ink:#2a0f1c; --accent-soft:#4d2539;
+  --live:#ff8fb5; --ok:#5fd3a0; --warn:#f0b35a; color-scheme:dark}
+*{box-sizing:border-box}
+html{color-scheme:light}
+body{margin:0}
+[hidden]{display:none!important}
+body{padding-top:env(safe-area-inset-top,0px)}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-ui);font-size:15px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:880px;margin:0 auto;padding-block:16px 150px;display:flex;flex-direction:column;gap:16px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px}
+.brand h1{font-size:20px;margin:0;font-weight:700;letter-spacing:-.01em}
+.brand .pair{font-family:var(--f-mono);font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 10px}
+.status{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);font-weight:500}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--line)}
+.status[data-s="listening"] .dot{background:var(--live);box-shadow:0 0 0 0 var(--live);animation:pulse 1.4s infinite}
+.status[data-s="listening"]{color:var(--live)}
+.status[data-s="starting"] .dot,.status[data-s="finishing"] .dot{background:var(--warn)}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--live) 60%,transparent)}100%{box-shadow:0 0 0 10px transparent}}
+
+/* booth */
+.booth{background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:18px 20px;display:flex;flex-direction:column;gap:10px;min-height:150px}
+.booth .lbl{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600;display:flex;justify-content:space-between;gap:8px}
+.live-ko{font-family:var(--f-ko);font-size:calc(18px*var(--scale));color:var(--muted);min-height:1.6em;word-break:keep-all;overflow-wrap:anywhere}
+.live-ko .partial{color:var(--fg);opacity:.75}
+.live-vi{font-size:calc(26px*var(--scale));font-weight:600;line-height:1.35;text-wrap:pretty;min-height:1.4em}
+.live-vi.empty{color:var(--muted);font-weight:500;font-size:calc(18px*var(--scale))}
+
+/* settings */
+details.settings{background:var(--tint);border-radius:14px;padding:4px 14px}
+details.settings summary{cursor:pointer;padding:8px 0;font-weight:600;font-size:14px;list-style:none;display:flex;justify-content:space-between}
+details.settings summary::after{content:"＋";color:var(--muted)}
+details.settings[open] summary::after{content:"－"}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;padding-bottom:14px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{font-size:12px;color:var(--muted);font-weight:600}
+input[type=text],select,textarea{font:inherit;color:var(--fg);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 10px;width:100%}
+textarea{resize:vertical;min-height:44px;font-family:var(--f-ko)}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+/* transcript */
+.tx-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.tx-head h2{font-size:15px;margin:0;font-weight:700}
+.btn{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:999px;padding:6px 14px;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent)}
+.list{display:flex;flex-direction:column}
+.item{display:grid;grid-template-columns:54px 1fr;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+.item:first-child{border-top:0}
+.t{font-family:var(--f-mono);font-size:11px;color:var(--muted);padding-top:4px;font-variant-numeric:tabular-nums}
+.pair-txt{min-width:0;display:flex;flex-direction:column;gap:4px}
+.ko{font-family:var(--f-ko);color:var(--muted);font-size:calc(14px*var(--scale));word-break:keep-all;overflow-wrap:anywhere}
+.vi{font-size:calc(16px*var(--scale));font-weight:500}
+.vi.pending{color:var(--muted);font-style:italic;font-weight:400}
+.vi.err{color:var(--warn);font-weight:400;font-size:13px}
+body.vi-only .ko{display:none}
+.example-tag{font-size:11px;background:var(--accent-soft);color:var(--fg);border-radius:6px;padding:1px 7px;font-weight:600}
+.empty-note{color:var(--muted);font-size:14px;padding:12px 0}
+
+/* dock */
+.dock{position:fixed;left:0;right:0;bottom:0;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-top:1px solid var(--line);
+  padding:12px max(16px,env(safe-area-inset-right,0px)) calc(12px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));z-index:5}
+.dock-in{max-width:880px;margin:0 auto;display:flex;align-items:center;gap:14px}
+.mic{flex:none;width:64px;height:64px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);cursor:pointer;display:grid;place-items:center;box-shadow:0 6px 18px color-mix(in srgb,var(--accent) 35%,transparent);transition:transform .15s}
+.mic:hover{transform:scale(1.04)}
+.mic svg{width:28px;height:28px}
+.mic.on{background:var(--live)}
+.mic:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.dock-msg{flex:1;min-width:0;font-size:13px;color:var(--muted)}
+.dock-msg strong{color:var(--fg);display:block;font-size:14px}
+.typein{flex:1;min-width:0;display:none;gap:8px}
+.typein.show{display:flex}
+
+/* subtitle (cabin screen) mode */
+.screen{position:fixed;inset:0;background:var(--bg);z-index:20;display:flex;flex-direction:column;justify-content:flex-end;gap:18px;
+  padding:calc(24px + env(safe-area-inset-top,0px)) max(24px,env(safe-area-inset-right,0px)) calc(110px + env(safe-area-inset-bottom,0px)) max(24px,env(safe-area-inset-left,0px))}
+.screen .prev{font-size:calc(22px*var(--scale));color:var(--muted);line-height:1.4}
+.screen .cur{font-size:calc(38px*var(--scale));font-weight:700;line-height:1.3;text-wrap:pretty}
+.screen .sko{font-family:var(--f-ko);font-size:calc(18px*var(--scale));color:var(--muted)}
+.screen .close{position:absolute;top:calc(16px + env(safe-area-inset-top,0px));right:max(16px,env(safe-area-inset-right,0px))}
+@media (max-width:520px){.live-vi{font-size:calc(21px*var(--scale))}.screen .cur{font-size:calc(28px*var(--scale))}.item{grid-template-columns:1fr;gap:2px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><h1>Cabin Hàn–Việt</h1><span class="pair">한국어 → Tiếng Việt</span></div>
+    <span class="status" id="status" data-s="idle"><span class="dot"></span><span id="statusTxt">Đang chờ</span></span>
+  </header>
+
+  <section class="booth" aria-live="polite">
+    <div class="lbl"><span>Đang nghe · 한국어</span><span id="latency"></span></div>
+    <div class="live-ko" id="liveKo"><span class="partial" id="koPartial"></span></div>
+    <div class="lbl"><span>Bản dịch trực tiếp</span></div>
+    <div class="live-vi empty" id="liveVi">Bấm nút micro rồi để điện thoại/máy tính gần người nói tiếng Hàn.</div>
+  </section>
+
+  <details class="settings" id="settings">
+    <summary>Cài đặt phiên dịch</summary>
+    <div class="grid">
+      <div class="field"><label for="engine">Bộ dịch</label>
+        <select id="engine">
+          <option value="mymemory">MyMemory (miễn phí, có giới hạn mỗi ngày)</option>
+          <option value="google">Google Dịch (miễn phí, không chính thức)</option>
+        </select></div>
+      <div class="field"><label for="email">Email cho MyMemory (không bắt buộc, tăng giới hạn lên ~50.000 ký tự/ngày)</label>
+        <input type="text" id="email" inputmode="email" placeholder="ban@example.com"></div>
+      <div class="field"><label for="size">Cỡ chữ</label>
+        <select id="size"><option value="0.9">Nhỏ</option><option value="1" selected>Vừa</option><option value="1.25">Lớn</option><option value="1.5">Rất lớn</option></select></div>
+      <div class="field"><label for="speak">Đọc to bản dịch</label>
+        <select id="speak"><option value="off" selected>Tắt</option><option value="on">Bật (nên đeo tai nghe để micro không nghe lại)</option></select></div>
+    </div>
+  </details>
+
+  <section>
+    <div class="tx-head">
+      <h2>Biên bản song ngữ</h2>
+      <div class="row">
+        <button class="btn" id="viOnly" aria-pressed="false">Chỉ tiếng Việt</button>
+        <button class="btn" id="screenBtn">Màn hình phụ đề</button>
+        <button class="btn" id="copyBtn">Sao chép</button>
+        <button class="btn" id="clearBtn">Xoá</button>
+      </div>
+    </div>
+    <div class="list" id="list"></div>
+  </section>
+</div>
+
+<div class="dock">
+  <div class="dock-in">
+    <button class="mic" id="mic" aria-label="Bắt đầu nghe">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="micIcon"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+    </button>
+    <div class="dock-msg" id="dockMsg"><strong>Sẵn sàng</strong>Bấm micro để bắt đầu phiên dịch.</div>
+    <form class="typein" id="typein">
+      <textarea id="typeBox" rows="1" placeholder="Dán hoặc gõ câu tiếng Hàn để dịch"></textarea>
+      <button class="btn" type="submit">Dịch</button>
+    </form>
+  </div>
+</div>
+
+<div class="screen" id="screen" hidden>
+  <button class="btn close" id="closeScreen">Đóng</button>
+  <div class="prev" id="sPrev"></div>
+  <div class="sko" id="sKo"></div>
+  <div class="cur" id="sCur">…</div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const store = {get(k){try{return localStorage.getItem(k)}catch(e){return null}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+  const MIC_SVG = $('micIcon').outerHTML;
+  const STOP_SVG = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>';
+
+  let items = [];          // {t, ko, vi, state:'pending'|'done'|'err', example}
+  let rec = null;
+  let wantListening = false;
+
+  // ---------- settings ----------
+  ['engine','email','size','speak'].forEach(k => {
+    const v = store.get('cab_'+k); if (v !== null) $(k).value = v;
+    $(k).addEventListener('change', () => { store.set('cab_'+k, $(k).value); applySize(); });
+  });
+  function applySize(){ document.documentElement.style.setProperty('--scale', $('size').value); }
+  applySize();
+
+  // ---------- examples ----------
+  [
+    {ko:"안녕하세요, 오늘 회의에 와 주셔서 감사합니다.", vi:"Xin chào, cảm ơn mọi người đã đến dự cuộc họp hôm nay."},
+    {ko:"먼저 지난 분기 매출 결과부터 말씀드리겠습니다.", vi:"Trước tiên, tôi xin trình bày kết quả doanh thu quý vừa rồi."}
+  ].forEach(e => items.push({t:'—', ko:e.ko, vi:e.vi, state:'done', example:true}));
+
+  const fmtTime = () => new Date().toTimeString().slice(0,8);
+  const realItems = () => items.filter(i => !i.example);
+
+  // ---------- rendering ----------
+  function render(){
+    const list = $('list'); list.textContent = '';
+    if (!items.length){ const p=document.createElement('div'); p.className='empty-note'; p.textContent='Chưa có câu nào. Bấm micro để bắt đầu, mỗi câu tiếng Hàn sẽ hiện kèm bản dịch ở đây.'; list.append(p); }
+    for (const it of items.slice().reverse()){
+      const row=document.createElement('div'); row.className='item';
+      const t=document.createElement('div'); t.className='t'; t.textContent=it.t;
+      if (it.example){ t.textContent=''; const tag=document.createElement('span'); tag.className='example-tag'; tag.textContent='Ví dụ'; t.append(tag); }
+      const box=document.createElement('div'); box.className='pair-txt';
+      const ko=document.createElement('div'); ko.className='ko'; ko.textContent=it.ko;
+      const vi=document.createElement('div'); vi.className='vi'+(it.state==='pending'?' pending':'')+(it.state==='err'?' err':'');
+      vi.textContent = it.vi || (it.state==='pending' ? 'Đang dịch…' : '');
+      box.append(ko,vi); row.append(t,box); list.append(row);
+    }
+    const real = realItems(), last = real[real.length-1], v = $('liveVi');
+    if (last && last.vi && last.state==='done'){ v.textContent=last.vi; v.classList.remove('empty'); }
+    else if (last){ v.textContent='Đang dịch…'; v.classList.add('empty'); }
+    renderScreen();
+  }
+  function renderScreen(){
+    if ($('screen').hidden) return;
+    const real = realItems().filter(i => i.state==='done');
+    const cur = real[real.length-1], prev = real[real.length-2];
+    $('sCur').textContent = cur ? cur.vi : 'Bản dịch sẽ hiện ở đây…';
+    $('sPrev').textContent = prev ? prev.vi : '';
+    $('sKo').textContent = cur ? cur.ko : '';
+  }
+
+  // ---------- translation ----------
+  async function viaMyMemory(text){
+    // MyMemory nhận tối đa 500 byte mỗi lần nên cắt câu dài thành nhiều phần
+    const parts = chunk(text, 150);
+    const out = [];
+    for (const p of parts){
+      const email = $('email').value.trim();
+      const url = 'https://api.mymemory.translated.net/get?langpair=ko|vi&q=' + encodeURIComponent(p) + (email ? '&de=' + encodeURIComponent(email) : '');
+      const r = await fetch(url);
+      if (!r.ok) throw new Error('http');
+      const j = await r.json();
+      if (j.quotaFinished || j.responseStatus == 429) throw new Error('quota');
+      if (j.responseStatus != 200) throw new Error(String(j.responseDetails || 'error'));
+      out.push(j.responseData.translatedText);
+    }
+    return out.join(' ');
+  }
+  async function viaGoogle(text){
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=ko&tl=vi&dt=t&q=' + encodeURIComponent(text);
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.status == 429 ? 'quota' : 'http');
+    const j = await r.json();
+    return (j[0] || []).map(s => s[0]).join('');
+  }
+  function chunk(text, max){
+    if (text.length <= max) return [text];
+    const pieces = text.split(/(?<=[.?!。？！,，\s])/); const res=[]; let cur='';
+    for (const p of pieces){ if ((cur+p).length > max && cur){ res.push(cur); cur=''; } cur += p; }
+    if (cur) res.push(cur);
+    return res.flatMap(s => s.length > max ? s.match(new RegExp('.{1,'+max+'}','gs')) : [s]);
+  }
+  function decode(s){ const ta=document.createElement('textarea'); ta.innerHTML=s; return ta.value; }
+
+  async function translate(it){
+    const t0 = performance.now();
+    const engine = $('engine').value;
+    try{
+      let vi;
+      try { vi = engine === 'google' ? await viaGoogle(it.ko) : await viaMyMemory(it.ko); }
+      catch(e){
+        // bộ dịch chính lỗi hoặc hết lượt -> thử bộ còn lại
+        vi = engine === 'google' ? await viaMyMemory(it.ko) : await viaGoogle(it.ko);
+      }
+      it.vi = decode(vi).trim(); it.state = 'done';
+      $('latency').textContent = 'dịch trong ' + ((performance.now()-t0)/1000).toFixed(1) + ' giây';
+      speak(it.vi);
+    }catch(e){
+      it.state = 'err';
+      it.vi = e && e.message === 'quota'
+        ? 'Hết lượt dịch miễn phí hôm nay. Nhập email trong Cài đặt hoặc đổi bộ dịch.'
+        : 'Không dịch được câu này (kiểm tra kết nối mạng).';
+    }
+    render();
+  }
+  function pushSegment(ko){
+    ko = ko.trim(); if (!ko) return;
+    if (items.some(i => i.example)) items = items.filter(i => !i.example);
+    const it = {t:fmtTime(), ko, vi:'', state:'pending'};
+    items.push(it); render(); translate(it);
+  }
+
+  // ---------- đọc to ----------
+  function speak(text){
+    if ($('speak').value !== 'on' || !('speechSynthesis' in window)) return;
+    const u = new SpeechSynthesisUtterance(text); u.lang = 'vi-VN';
+    const v = speechSynthesis.getVoices().find(v => v.lang && v.lang.toLowerCase().startsWith('vi')); if (v) u.voice = v;
+    speechSynthesis.speak(u);
+  }
+
+  // ---------- nhận giọng nói ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  function setStatus(s){
+    $('status').dataset.s = s;
+    $('statusTxt').textContent = {idle:'Đang chờ', starting:'Đang mở micro…', listening:'Đang nghe'}[s];
+    const on = s !== 'idle', mic = $('mic');
+    mic.classList.toggle('on', on); mic.innerHTML = on ? STOP_SVG : MIC_SVG;
+    mic.setAttribute('aria-label', on ? 'Dừng nghe' : 'Bắt đầu nghe');
+  }
+  function dockMsg(a,b){ const d=$('dockMsg'); d.textContent=''; const s=document.createElement('strong'); s.textContent=a; d.append(s, document.createTextNode(b)); }
+  function showTypeIn(){ $('typein').classList.add('show'); }
+
+  if (!SR){
+    $('mic').disabled = true;
+    dockMsg('Trình duyệt này không nghe được giọng nói', 'Hãy mở bằng Chrome hoặc Edge. Bạn vẫn có thể dán câu tiếng Hàn để dịch.');
+    showTypeIn();
+  }
+
+  function startRec(){
+    rec = new SR();
+    rec.lang = 'ko-KR'; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+    rec.onstart = () => { setStatus('listening'); dockMsg('Đang nghe tiếng Hàn', 'Bản dịch hiện sau mỗi câu. Bấm nút để dừng.'); };
+    rec.onresult = ev => {
+      let interim = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++){
+        const r = ev.results[i];
+        if (r.isFinal) pushSegment(r[0].transcript);
+        else interim += r[0].transcript;
+      }
+      $('koPartial').textContent = interim;
+    };
+    rec.onerror = ev => {
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
+        wantListening = false;
+        dockMsg('Micro bị chặn', 'Bấm biểu tượng ổ khoá trên thanh địa chỉ và cho phép micro, rồi thử lại.'); showTypeIn();
+      } else if (ev.error === 'audio-capture'){
+        wantListening = false; dockMsg('Không tìm thấy micro', 'Kiểm tra micro đã cắm và không bị app khác chiếm.');
+      } else if (ev.error === 'network'){
+        dockMsg('Mất kết nối nhận giọng', 'Chrome cần internet để nhận giọng nói. Đang thử lại…');
+      }
+      // 'no-speech' và 'aborted' bỏ qua, onend sẽ tự bật lại
+    };
+    rec.onend = () => {
+      $('koPartial').textContent = '';
+      // Chrome tự tắt sau một lúc im lặng -> tự mở lại để nghe liên tục như cabin
+      if (wantListening){ setTimeout(() => { if (wantListening) try { rec.start(); } catch(e){} }, 250); }
+      else { setStatus('idle'); dockMsg('Đã dừng', 'Bấm micro để nghe tiếp.'); }
+    };
+    setStatus('starting');
+    try { rec.start(); } catch(e){}
+  }
+
+  $('mic').addEventListener('click', () => {
+    if (!SR) return;
+    if (wantListening){ wantListening = false; try { rec && rec.stop(); } catch(e){} return; }
+    wantListening = true; startRec();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && wantListening && rec){ try { rec.start(); } catch(e){} }
+  });
+
+  $('typein').addEventListener('submit', ev => { ev.preventDefault(); const v=$('typeBox').value; $('typeBox').value=''; v.split(/\n+/).forEach(pushSegment); });
+  $('typeBox').addEventListener('keydown', ev => { if (ev.key==='Enter' && !ev.shiftKey){ ev.preventDefault(); $('typein').requestSubmit(); } });
+
+  // ---------- thanh công cụ ----------
+  $('viOnly').addEventListener('click', e => { const on=document.body.classList.toggle('vi-only'); e.currentTarget.setAttribute('aria-pressed', on); });
+  let wake = null;
+  $('screenBtn').addEventListener('click', async () => {
+    $('screen').hidden = false; renderScreen();
+    try { wake = await navigator.wakeLock.request('screen'); } catch(e){}
+    try { await document.documentElement.requestFullscreen(); } catch(e){}
+  });
+  $('closeScreen').addEventListener('click', () => {
+    $('screen').hidden = true;
+    try { wake && wake.release(); } catch(e){}
+    if (document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+  });
+  $('clearBtn').addEventListener('click', e => {
+    const b = e.currentTarget;
+    if (b.dataset.confirm){ items=[]; delete b.dataset.confirm; b.textContent='Xoá'; $('liveVi').textContent='Đã xoá biên bản.'; $('liveVi').classList.add('empty'); render(); return; }
+    b.dataset.confirm='1'; b.textContent='Bấm lần nữa để xoá';
+    setTimeout(() => { if (b.dataset.confirm){ delete b.dataset.confirm; b.textContent='Xoá'; } }, 3000);
+  });
+  $('copyBtn').addEventListener('click', e => {
+    const b = e.currentTarget;
+    const txt = realItems().map(i => `[${i.t}]\n${i.ko}\n→ ${i.vi}`).join('\n\n');
+    const done = () => { b.textContent='Đã chép'; setTimeout(()=>b.textContent='Sao chép',1500); };
+    navigator.clipboard.writeText(txt).then(done, () => {
+      const ta=document.createElement('textarea'); ta.value=txt; document.body.append(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch(err){} ta.remove();
+    });
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
