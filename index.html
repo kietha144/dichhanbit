@@ -108,6 +108,14 @@ body.vi-only .ko{display:none}
 .screen .sko{font-family:var(--f-ko);font-size:calc(18px*var(--scale));color:var(--muted)}
 .screen .close{position:absolute;top:calc(16px + env(safe-area-inset-top,0px));right:max(16px,env(safe-area-inset-right,0px))}
 @media (max-width:520px){.live-vi{font-size:calc(21px*var(--scale))}.screen .cur{font-size:calc(28px*var(--scale))}.item{grid-template-columns:1fr;gap:2px}}
+.email-row{flex-wrap:nowrap}
+.email-row input{flex:1;min-width:0}
+.quota{font-size:12px;color:var(--muted);line-height:1.45}
+.quota b{color:var(--fg)}
+.quota.ok b{color:var(--ok)}
+.quota.bad{color:var(--warn)}
+.meter{height:5px;border-radius:99px;background:var(--line);margin-top:5px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--accent);border-radius:99px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .count{font-family:var(--f-mono);font-size:11px;background:var(--accent-soft);border-radius:999px;padding:0 7px;margin-left:2px}
 .count:empty{display:none}
@@ -166,7 +174,11 @@ label.btn{display:inline-flex;align-items:center}
           <option value="google">Google Dịch (miễn phí, không chính thức)</option>
         </select></div>
       <div class="field"><label for="email">Email cho MyMemory (không bắt buộc, tăng giới hạn lên ~50.000 ký tự/ngày)</label>
-        <input type="text" id="email" inputmode="email" placeholder="ban@example.com"></div>
+        <div class="row email-row">
+          <input type="text" id="email" inputmode="email" autocomplete="email" placeholder="ban@example.com">
+          <button class="btn" type="button" id="emailSave">Lưu email</button>
+        </div>
+        <div class="quota" id="quotaNote"></div></div>
       <div class="field"><label for="size">Cỡ chữ</label>
         <select id="size"><option value="0.9">Nhỏ</option><option value="1" selected>Vừa</option><option value="1.25">Lớn</option><option value="1.5">Rất lớn</option></select></div>
       <div class="field"><label for="speak">Đọc to bản dịch</label>
@@ -275,12 +287,46 @@ label.btn{display:inline-flex;align-items:center}
   const titleOf = s => (s.title && s.title.trim()) || ('Hội thoại ' + fmtDate(s.created));
 
   // ---------- settings ----------
-  ['engine','email','size','speak'].forEach(k => {
+  ['engine','size','speak'].forEach(k => {
     const v = store.get('cab_'+k); if (v !== null) $(k).value = v;
     $(k).addEventListener('change', () => { store.set('cab_'+k, $(k).value); applySize(); });
   });
   function applySize(){ document.documentElement.style.setProperty('--scale', $('size').value); }
   applySize();
+
+  // ---------- email MyMemory + đếm ký tự đã dùng hôm nay (đếm trên trình duyệt này) ----------
+  let savedEmail = store.get('cab_email') || '';
+  $('email').value = savedEmail;
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  const today = () => new Date().toISOString().slice(0,10);
+  function usage(){ try { const u = JSON.parse(store.get('cab_usage') || '{}'); return u.day === today() ? u : {day:today(), chars:0}; } catch(e){ return {day:today(), chars:0}; } }
+  function addUsage(n){ const u = usage(); u.chars += n; store.set('cab_usage', JSON.stringify(u)); renderQuota(); }
+  function renderQuota(msg, bad){
+    const q = $('quotaNote'); q.textContent = ''; q.className = 'quota' + (bad ? ' bad' : savedEmail ? ' ok' : '');
+    if (msg){ q.textContent = msg; return; }
+    const limit = savedEmail ? 50000 : 5000, used = usage().chars;
+    const b = document.createElement('b');
+    b.textContent = savedEmail ? '✓ Đang dùng email ' + savedEmail : 'Chưa có email';
+    q.append(b, document.createTextNode(
+      ` · giới hạn khoảng ${limit.toLocaleString('vi-VN')} ký tự/ngày. Hôm nay máy này đã dịch ${used.toLocaleString('vi-VN')} ký tự.`));
+    const m = document.createElement('div'); m.className = 'meter';
+    const i = document.createElement('i'); i.style.width = Math.min(100, used / limit * 100) + '%'; m.append(i); q.append(m);
+  }
+  function saveEmail(){
+    const v = $('email').value.trim();
+    if (v && !EMAIL_RE.test(v)){ renderQuota('Email chưa đúng định dạng (VD: ten@gmail.com). Chưa lưu.', true); return; }
+    savedEmail = v; store.set('cab_email', v);
+    const btn = $('emailSave'); btn.textContent = v ? 'Đã lưu ✓' : 'Đã xoá email';
+    setTimeout(() => btn.textContent = 'Lưu email', 1800);
+    renderQuota();
+  }
+  $('emailSave').addEventListener('click', saveEmail);
+  $('email').addEventListener('keydown', e => { if (e.key === 'Enter'){ e.preventDefault(); saveEmail(); } });
+  $('email').addEventListener('input', () => {
+    if ($('email').value.trim() !== savedEmail) renderQuota('Bấm “Lưu email” để áp dụng.', false);
+    else renderQuota();
+  });
+  renderQuota();
 
   // ---------- examples ----------
   [
@@ -325,7 +371,7 @@ label.btn{display:inline-flex;align-items:center}
     const parts = chunk(text, 150);
     const out = [];
     for (const p of parts){
-      const email = $('email').value.trim();
+      const email = savedEmail;
       const url = 'https://api.mymemory.translated.net/get?langpair=ko|vi&q=' + encodeURIComponent(p) + (email ? '&de=' + encodeURIComponent(email) : '');
       const r = await fetch(url);
       if (!r.ok) throw new Error('http');
@@ -333,6 +379,7 @@ label.btn{display:inline-flex;align-items:center}
       if (j.quotaFinished || j.responseStatus == 429) throw new Error('quota');
       if (j.responseStatus != 200) throw new Error(String(j.responseDetails || 'error'));
       out.push(j.responseData.translatedText);
+      addUsage(p.length);
     }
     return out.join(' ');
   }
@@ -368,7 +415,7 @@ label.btn{display:inline-flex;align-items:center}
     }catch(e){
       it.state = 'err';
       it.vi = e && e.message === 'quota'
-        ? 'Hết lượt dịch miễn phí hôm nay. Nhập email trong Cài đặt hoặc đổi bộ dịch.'
+        ? (savedEmail ? 'Email này đã hết lượt dịch hôm nay. Chọn bộ dịch Google trong Cài đặt để dịch tiếp.' : 'Hết lượt dịch miễn phí hôm nay. Nhập email trong Cài đặt rồi bấm “Lưu email” để có thêm lượt.')
         : 'Không dịch được câu này (kiểm tra kết nối mạng).';
       finish(it);
     }
